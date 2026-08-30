@@ -1,10 +1,11 @@
 import os
 import asyncio
-from aiohttp import web
-import yt_dlp
 
+from aiohttp import web
 from pyrogram import Client, filters
 from pyrogram.types import Message
+from pyrogram.errors import FloodWait
+import yt_dlp
 
 
 # =========================================================
@@ -26,7 +27,7 @@ bot = Client(
     "music_bot",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
+    bot_token=BOT_TOKEN
 )
 
 
@@ -43,6 +44,7 @@ now_playing = {}
 # =========================================================
 
 def search_song(query):
+
     options = {
         "format": "bestaudio/best",
         "quiet": True,
@@ -52,12 +54,17 @@ def search_song(query):
     }
 
     with yt_dlp.YoutubeDL(options) as ydl:
-        info = ydl.extract_info(query, download=False)
+
+        info = ydl.extract_info(
+            query,
+            download=False
+        )
 
         if not info:
             raise Exception("No result found.")
 
         if "entries" in info:
+
             entries = info.get("entries") or []
 
             if not entries:
@@ -66,34 +73,39 @@ def search_song(query):
             info = entries[0]
 
         return {
-            "title": info.get("title", "Unknown"),
+            "title": info.get(
+                "title",
+                "Unknown"
+            ),
             "url": info.get("url"),
-            "webpage_url": info.get("webpage_url"),
+            "webpage_url": info.get(
+                "webpage_url"
+            )
         }
 
 
 # =========================================================
-# START
+# /START
 # =========================================================
 
 @bot.on_message(filters.command("start"))
 async def start_command(_, message: Message):
 
     await message.reply_text(
-        "🎵 **Telegram Music Bot**\n\n"
-        "✅ Bot is online and working!\n\n"
+        "🎵 **Music Bot**\n\n"
+        "✅ Bot is online!\n\n"
         "Commands:\n"
-        "▶️ `/play <song>` — Search for a song\n"
-        "📜 `/queue` — Show music queue\n"
-        "⏭ `/skip` — Skip current queue item\n"
-        "⏹ `/stop` — Clear queue\n"
-        "❓ `/help` — Show help\n\n"
-        "⚠️ Voice-chat playback is currently disabled."
+        "▶️ `/play <song>` - Search song\n"
+        "📜 `/queue` - Show queue\n"
+        "⏭ `/skip` - Skip song\n"
+        "⏹ `/stop` - Clear queue\n"
+        "❓ `/help` - Help\n\n"
+        "⚠️ Voice playback is currently disabled."
     )
 
 
 # =========================================================
-# HELP
+# /HELP
 # =========================================================
 
 @bot.on_message(filters.command("help"))
@@ -102,41 +114,46 @@ async def help_command(_, message: Message):
     await message.reply_text(
         "🎵 **Music Bot Help**\n\n"
         "▶️ `/play <song>`\n"
-        "Search for a song and add it to the queue.\n\n"
+        "Search for a song.\n\n"
         "📜 `/queue`\n"
         "Show the current queue.\n\n"
         "⏭ `/skip`\n"
-        "Remove the first song from the queue.\n\n"
+        "Skip the first queued song.\n\n"
         "⏹ `/stop`\n"
-        "Clear the entire queue.\n\n"
+        "Clear the queue.\n\n"
         "❓ `/help`\n"
-        "Show this help message.\n\n"
-        "⚠️ Voice-chat playback is currently disabled."
+        "Show this help message."
     )
 
 
 # =========================================================
-# PLAY
+# /PLAY
 # =========================================================
 
 @bot.on_message(filters.command("play"))
 async def play_command(_, message: Message):
 
     if len(message.command) < 2:
+
         await message.reply_text(
-            "❌ **Usage:**\n\n"
+            "❌ Usage:\n"
             "`/play song name`"
         )
+
         return
 
-    query = " ".join(message.command[1:])
+    query = " ".join(
+        message.command[1:]
+    )
+
     chat_id = message.chat.id
 
     status = await message.reply_text(
-        "🔎 Searching for the song..."
+        "🔎 Searching..."
     )
 
     try:
+
         song = await asyncio.to_thread(
             search_song,
             query
@@ -145,9 +162,10 @@ async def play_command(_, message: Message):
     except Exception as error:
 
         await status.edit_text(
-            "❌ **Search failed.**\n\n"
+            "❌ Search failed.\n\n"
             f"`{str(error)[:1000]}`"
         )
+
         return
 
     if chat_id not in queues:
@@ -155,7 +173,9 @@ async def play_command(_, message: Message):
 
     queues[chat_id].append(song)
 
-    position = len(queues[chat_id])
+    position = len(
+        queues[chat_id]
+    )
 
     await status.edit_text(
         "🎵 **Song found!**\n\n"
@@ -166,51 +186,62 @@ async def play_command(_, message: Message):
 
 
 # =========================================================
-# QUEUE
+# /QUEUE
 # =========================================================
 
 @bot.on_message(filters.command("queue"))
 async def queue_command(_, message: Message):
 
     chat_id = message.chat.id
-    queue = queues.get(chat_id, [])
+
+    queue = queues.get(
+        chat_id,
+        []
+    )
 
     if not queue:
+
         await message.reply_text(
             "📜 **Queue is empty.**"
         )
+
         return
 
     text = "📜 **Music Queue**\n\n"
 
-    for number, song in enumerate(queue, 1):
-
-        title = song.get(
-            "title",
-            "Unknown"
-        )
+    for number, song in enumerate(
+        queue,
+        1
+    ):
 
         text += (
-            f"`{number}.` {title}\n"
+            f"`{number}.` "
+            f"{song.get('title', 'Unknown')}\n"
         )
 
     await message.reply_text(text)
 
 
 # =========================================================
-# SKIP
+# /SKIP
 # =========================================================
 
 @bot.on_message(filters.command("skip"))
 async def skip_command(_, message: Message):
 
     chat_id = message.chat.id
-    queue = queues.get(chat_id, [])
+
+    queue = queues.get(
+        chat_id,
+        []
+    )
 
     if not queue:
+
         await message.reply_text(
-            "❌ **Nothing is in the queue.**"
+            "❌ Nothing is in the queue."
         )
+
         return
 
     skipped = queue.pop(0)
@@ -222,7 +253,7 @@ async def skip_command(_, message: Message):
 
 
 # =========================================================
-# STOP
+# /STOP
 # =========================================================
 
 @bot.on_message(filters.command("stop"))
@@ -230,8 +261,15 @@ async def stop_command(_, message: Message):
 
     chat_id = message.chat.id
 
-    queues.pop(chat_id, None)
-    now_playing.pop(chat_id, None)
+    queues.pop(
+        chat_id,
+        None
+    )
+
+    now_playing.pop(
+        chat_id,
+        None
+    )
 
     await message.reply_text(
         "⏹ **Music stopped.**\n\n"
@@ -254,8 +292,15 @@ async def start_health_server():
 
     app = web.Application()
 
-    app.router.add_get("/", health)
-    app.router.add_get("/health", health)
+    app.router.add_get(
+        "/",
+        health
+    )
+
+    app.router.add_get(
+        "/health",
+        health
+    )
 
     runner = web.AppRunner(app)
 
@@ -286,28 +331,68 @@ async def main():
     print("🚀 Starting Music Bot...")
     print("==============================")
 
-    # Start Render health server
+    # Start Render web server
     await start_health_server()
 
     print("🌐 Health server started.")
 
-    # Start Telegram bot
-    await bot.start()
-
-    print("🤖 Telegram bot started.")
-    print("==============================")
-    print("🎵 MUSIC BOT IS READY")
-    print("==============================")
-
-    # Keep process alive
     try:
+
+        print("🤖 Starting Telegram bot...")
+
+        await bot.start()
+
+        print("✅ Telegram bot started.")
+
+        print("==============================")
+        print("🎵 MUSIC BOT IS READY")
+        print("==============================")
+
+        # Keep bot alive
         await asyncio.Event().wait()
 
+    except FloodWait as e:
+
+        print("==============================")
+        print("⏳ TELEGRAM FLOOD WAIT")
+        print("==============================")
+
+        print(
+            f"Telegram requires a wait of "
+            f"{e.value} seconds."
+        )
+
+        print(
+            "Do NOT repeatedly restart/deploy "
+            "the service during this period."
+        )
+
+        print("==============================")
+
+    except Exception as error:
+
+        print("==============================")
+        print("❌ BOT ERROR")
+        print("==============================")
+
+        print(
+            f"{type(error).__name__}: {error}"
+        )
+
+        print("==============================")
+
     finally:
-        print("🛑 Stopping Telegram bot...")
 
         try:
-            await bot.stop()
+
+            if bot.is_connected:
+
+                print(
+                    "🛑 Stopping Telegram bot..."
+                )
+
+                await bot.stop()
+
         except Exception:
             pass
 
@@ -319,12 +404,18 @@ async def main():
 if __name__ == "__main__":
 
     try:
+
         asyncio.run(main())
 
     except KeyboardInterrupt:
-        print("🛑 Bot stopped.")
+
+        print(
+            "🛑 Bot stopped manually."
+        )
 
     except Exception as error:
+
         print(
-            f"❌ Fatal error: {error}"
+            f"❌ Fatal error: "
+            f"{type(error).__name__}: {error}"
         )
