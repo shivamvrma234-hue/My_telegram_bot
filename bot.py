@@ -3,18 +3,37 @@ import asyncio
 import logging
 import tempfile
 
+# ============================================================
+# PYROGRAM / PYTGCalls COMPATIBILITY
+# ============================================================
+
 import pyrogram.errors
 
-# ============================================================
-# Pyrogram / PyTgCalls compatibility fix
-# ============================================================
+# PyTgCalls 2.2.x expects these older names.
+# Pyrogram 2.0.106 uses slightly different names.
 
 if not hasattr(pyrogram.errors, "GroupcallForbidden"):
-    class GroupcallForbidden(Exception):
-        pass
+    pyrogram.errors.GroupcallForbidden = (
+        getattr(
+            pyrogram.errors,
+            "GroupCallForbidden",
+            Exception
+        )
+    )
 
-    pyrogram.errors.GroupcallForbidden = GroupcallForbidden
+if not hasattr(pyrogram.errors, "GroupcallInvalid"):
+    pyrogram.errors.GroupcallInvalid = (
+        getattr(
+            pyrogram.errors,
+            "GroupCallInvalid",
+            Exception
+        )
+    )
 
+
+# ============================================================
+# IMPORTS
+# ============================================================
 
 from pyrogram import Client, filters
 from pyrogram.types import Message
@@ -29,7 +48,7 @@ from aiohttp import web
 
 
 # ============================================================
-# CONFIG
+# ENVIRONMENT VARIABLES
 # ============================================================
 
 API_ID = int(os.environ["API_ID"])
@@ -37,7 +56,12 @@ API_HASH = os.environ["API_HASH"]
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 SESSION_STRING = os.environ["SESSION_STRING"]
 
-PORT = int(os.environ.get("PORT", "10000"))
+PORT = int(
+    os.environ.get(
+        "PORT",
+        "10000"
+    )
+)
 
 
 # ============================================================
@@ -49,11 +73,13 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-log = logging.getLogger("TelegramMusicBot")
+log = logging.getLogger(
+    "TelegramMusicBot"
+)
 
 
 # ============================================================
-# TELEGRAM
+# BOT CLIENT
 # ============================================================
 
 bot = Client(
@@ -63,6 +89,11 @@ bot = Client(
     bot_token=BOT_TOKEN
 )
 
+
+# ============================================================
+# ASSISTANT CLIENT
+# ============================================================
+
 assistant = Client(
     "music_assistant",
     api_id=API_ID,
@@ -70,19 +101,27 @@ assistant = Client(
     session_string=SESSION_STRING
 )
 
-voice = PyTgCalls(assistant)
+
+# ============================================================
+# VOICE CLIENT
+# ============================================================
+
+voice = PyTgCalls(
+    assistant
+)
 
 
 # ============================================================
-# MUSIC DATA
+# MUSIC QUEUES
 # ============================================================
 
 queues = {}
+
 current_song = {}
-downloaded_files = {}
 
 
 def get_queue(chat_id):
+
     if chat_id not in queues:
         queues[chat_id] = []
 
@@ -95,7 +134,10 @@ def get_queue(chat_id):
 
 async def search_youtube(query):
 
-    if query.startswith("http://") or query.startswith("https://"):
+    if (
+        query.startswith("http://")
+        or query.startswith("https://")
+    ):
         return query, query
 
     options = {
@@ -108,28 +150,49 @@ async def search_youtube(query):
 
     def search():
 
-        with yt_dlp.YoutubeDL(options) as ydl:
+        with yt_dlp.YoutubeDL(
+            options
+        ) as ydl:
 
             info = ydl.extract_info(
                 "ytsearch1:" + query,
                 download=False
             )
 
-            if not info or not info.get("entries"):
+            if not info:
                 return None
 
-            result = info["entries"][0]
+            entries = info.get(
+                "entries"
+            )
 
-            title = result.get("title", query)
+            if not entries:
+                return None
+
+            result = entries[0]
+
+            title = result.get(
+                "title",
+                query
+            )
 
             url = (
-                result.get("webpage_url")
-                or result.get("url")
+                result.get(
+                    "webpage_url"
+                )
+                or result.get(
+                    "url"
+                )
             )
+
+            if not url:
+                return None
 
             return title, url
 
-    return await asyncio.to_thread(search)
+    return await asyncio.to_thread(
+        search
+    )
 
 
 # ============================================================
@@ -138,15 +201,8 @@ async def search_youtube(query):
 
 async def download_audio(url):
 
-    if url in downloaded_files:
-
-        path = downloaded_files[url]
-
-        if os.path.exists(path):
-            return path
-
     folder = tempfile.mkdtemp(
-        prefix="telegram_music_"
+        prefix="musicbot_"
     )
 
     output = os.path.join(
@@ -171,69 +227,80 @@ async def download_audio(url):
 
     def download():
 
-        with yt_dlp.YoutubeDL(options) as ydl:
+        with yt_dlp.YoutubeDL(
+            options
+        ) as ydl:
 
             info = ydl.extract_info(
                 url,
                 download=True
             )
 
-            original = ydl.prepare_filename(info)
+            filename = ydl.prepare_filename(
+                info
+            )
 
-            base = os.path.splitext(original)[0]
+            base = os.path.splitext(
+                filename
+            )[0]
 
             mp3 = base + ".mp3"
 
             if os.path.exists(mp3):
                 return mp3
 
-            return original
+            return filename
 
-    path = await asyncio.to_thread(download)
-
-    downloaded_files[url] = path
-
-    return path
+    return await asyncio.to_thread(
+        download
+    )
 
 
 # ============================================================
-# PLAY NEXT SONG
+# PLAY NEXT
 # ============================================================
 
 async def play_next(chat_id):
 
-    queue = get_queue(chat_id)
+    queue = get_queue(
+        chat_id
+    )
 
     if not queue:
 
-        current_song.pop(chat_id, None)
+        current_song.pop(
+            chat_id,
+            None
+        )
 
         return
 
-    song = queue.pop(0)
+    song = queue.pop(
+        0
+    )
 
-    current_song[chat_id] = song
-
-    title = song["title"]
-    url = song["url"]
+    current_song[
+        chat_id
+    ] = song
 
     try:
 
         log.info(
             "Downloading: %s",
-            title
+            song["title"]
         )
 
-        path = await download_audio(url)
+        audio = await download_audio(
+            song["url"]
+        )
 
         log.info(
             "Playing: %s",
-            title
+            song["title"]
         )
 
         stream = MediaStream(
-            path,
-            video_flags=MediaStream.Flags.IGNORE
+            audio
         )
 
         await voice.play(
@@ -252,19 +319,27 @@ async def play_next(chat_id):
             None
         )
 
-        await play_next(chat_id)
+        await play_next(
+            chat_id
+        )
 
 
 # ============================================================
-# AUTOMATIC NEXT SONG
+# VOICE CHAT END
 # ============================================================
 
 @voice.on_update()
-async def on_voice_update(_, update):
+async def voice_update(
+    _,
+    update
+):
 
     try:
 
-        if isinstance(update, StreamEnded):
+        if isinstance(
+            update,
+            StreamEnded
+        ):
 
             chat_id = update.chat_id
 
@@ -288,12 +363,17 @@ async def on_voice_update(_, update):
 # /START
 # ============================================================
 
-@bot.on_message(filters.command("start"))
-async def start_command(_, message: Message):
+@bot.on_message(
+    filters.command("start")
+)
+async def start_command(
+    _,
+    message: Message
+):
 
     await message.reply_text(
         "🎵 **Telegram Music Bot**\n\n"
-        "Use `/play <song>` to start music.\n\n"
+        "Use `/play song name` to play music.\n\n"
         "Commands:\n"
         "▶️ /play\n"
         "⏸ /pause\n"
@@ -310,17 +390,22 @@ async def start_command(_, message: Message):
 # /HELP
 # ============================================================
 
-@bot.on_message(filters.command("help"))
-async def help_command(_, message: Message):
+@bot.on_message(
+    filters.command("help")
+)
+async def help_command(
+    _,
+    message: Message
+):
 
     await message.reply_text(
-        "🎵 **Music Bot Commands**\n\n"
-        "▶️ `/play song name` — Play music\n"
-        "⏸ `/pause` — Pause music\n"
-        "▶️ `/resume` — Resume music\n"
-        "⏭ `/skip` — Skip current song\n"
-        "⏹ `/stop` — Stop and clear queue\n"
-        "📜 `/queue` — Show queue\n"
+        "🎵 **Music Commands**\n\n"
+        "▶️ `/play song` — Play music\n"
+        "⏸ `/pause` — Pause\n"
+        "▶️ `/resume` — Resume\n"
+        "⏭ `/skip` — Skip\n"
+        "⏹ `/stop` — Stop\n"
+        "📜 `/queue` — Queue\n"
         "🚪 `/leave` — Leave VC"
     )
 
@@ -329,14 +414,21 @@ async def help_command(_, message: Message):
 # /PLAY
 # ============================================================
 
-@bot.on_message(filters.command("play"))
-async def play_command(_, message: Message):
+@bot.on_message(
+    filters.command("play")
+)
+async def play_command(
+    _,
+    message: Message
+):
 
-    if len(message.command) < 2:
+    if len(
+        message.command
+    ) < 2:
 
         await message.reply_text(
-            "❌ Use:\n"
-            "`/play song name`"
+            "❌ Example:\n"
+            "`/play Alan Walker Faded`"
         )
 
         return
@@ -367,20 +459,20 @@ async def play_command(_, message: Message):
 
         chat_id = message.chat.id
 
+        queue = get_queue(
+            chat_id
+        )
+
         song = {
             "title": title,
             "url": url
         }
 
-        queue = get_queue(chat_id)
-
-        already_playing = (
-            chat_id in current_song
+        queue.append(
+            song
         )
 
-        queue.append(song)
-
-        if already_playing:
+        if chat_id in current_song:
 
             await status.edit_text(
                 "✅ **Added to queue**\n\n"
@@ -391,7 +483,7 @@ async def play_command(_, message: Message):
         else:
 
             await status.edit_text(
-                f"🎵 **Starting:** {title}"
+                f"🎵 **Playing:** {title}"
             )
 
             await play_next(
@@ -401,11 +493,12 @@ async def play_command(_, message: Message):
     except Exception as e:
 
         log.exception(
-            "Play command error"
+            "Play error"
         )
 
         await status.edit_text(
-            f"❌ Error:\n`{e}`"
+            "❌ Error:\n"
+            f"`{e}`"
         )
 
 
@@ -413,18 +506,15 @@ async def play_command(_, message: Message):
 # /PAUSE
 # ============================================================
 
-@bot.on_message(filters.command("pause"))
-async def pause_command(_, message: Message):
+@bot.on_message(
+    filters.command("pause")
+)
+async def pause_command(
+    _,
+    message: Message
+):
 
     chat_id = message.chat.id
-
-    if chat_id not in current_song:
-
-        await message.reply_text(
-            "❌ Nothing is playing."
-        )
-
-        return
 
     try:
 
@@ -439,7 +529,7 @@ async def pause_command(_, message: Message):
     except Exception as e:
 
         await message.reply_text(
-            f"❌ Pause failed:\n`{e}`"
+            f"❌ {e}"
         )
 
 
@@ -447,18 +537,15 @@ async def pause_command(_, message: Message):
 # /RESUME
 # ============================================================
 
-@bot.on_message(filters.command("resume"))
-async def resume_command(_, message: Message):
+@bot.on_message(
+    filters.command("resume")
+)
+async def resume_command(
+    _,
+    message: Message
+):
 
     chat_id = message.chat.id
-
-    if chat_id not in current_song:
-
-        await message.reply_text(
-            "❌ Nothing is playing."
-        )
-
-        return
 
     try:
 
@@ -473,7 +560,7 @@ async def resume_command(_, message: Message):
     except Exception as e:
 
         await message.reply_text(
-            f"❌ Resume failed:\n`{e}`"
+            f"❌ {e}"
         )
 
 
@@ -481,18 +568,15 @@ async def resume_command(_, message: Message):
 # /SKIP
 # ============================================================
 
-@bot.on_message(filters.command("skip"))
-async def skip_command(_, message: Message):
+@bot.on_message(
+    filters.command("skip")
+)
+async def skip_command(
+    _,
+    message: Message
+):
 
     chat_id = message.chat.id
-
-    if chat_id not in current_song:
-
-        await message.reply_text(
-            "❌ Nothing is playing."
-        )
-
-        return
 
     try:
 
@@ -509,7 +593,9 @@ async def skip_command(_, message: Message):
             "⏭ Skipped."
         )
 
-        await asyncio.sleep(1)
+        await asyncio.sleep(
+            1
+        )
 
         await play_next(
             chat_id
@@ -518,7 +604,7 @@ async def skip_command(_, message: Message):
     except Exception as e:
 
         await message.reply_text(
-            f"❌ Skip failed:\n`{e}`"
+            f"❌ {e}"
         )
 
 
@@ -526,12 +612,19 @@ async def skip_command(_, message: Message):
 # /STOP
 # ============================================================
 
-@bot.on_message(filters.command("stop"))
-async def stop_command(_, message: Message):
+@bot.on_message(
+    filters.command("stop")
+)
+async def stop_command(
+    _,
+    message: Message
+):
 
     chat_id = message.chat.id
 
-    get_queue(chat_id).clear()
+    get_queue(
+        chat_id
+    ).clear()
 
     current_song.pop(
         chat_id,
@@ -550,7 +643,7 @@ async def stop_command(_, message: Message):
 
     await message.reply_text(
         "⏹ **Stopped**\n"
-        "Queue cleared and left the VC."
+        "Queue cleared."
     )
 
 
@@ -558,12 +651,19 @@ async def stop_command(_, message: Message):
 # /LEAVE
 # ============================================================
 
-@bot.on_message(filters.command("leave"))
-async def leave_command(_, message: Message):
+@bot.on_message(
+    filters.command("leave")
+)
+async def leave_command(
+    _,
+    message: Message
+):
 
     chat_id = message.chat.id
 
-    get_queue(chat_id).clear()
+    get_queue(
+        chat_id
+    ).clear()
 
     current_song.pop(
         chat_id,
@@ -589,12 +689,19 @@ async def leave_command(_, message: Message):
 # /QUEUE
 # ============================================================
 
-@bot.on_message(filters.command("queue"))
-async def queue_command(_, message: Message):
+@bot.on_message(
+    filters.command("queue")
+)
+async def queue_command(
+    _,
+    message: Message
+):
 
     chat_id = message.chat.id
 
-    queue = get_queue(chat_id)
+    queue = get_queue(
+        chat_id
+    )
 
     text = []
 
@@ -602,7 +709,9 @@ async def queue_command(_, message: Message):
 
         text.append(
             "▶️ **Now Playing**\n"
-            + current_song[chat_id]["title"]
+            + current_song[
+                chat_id
+            ]["title"]
         )
 
     if queue:
@@ -637,10 +746,12 @@ async def queue_command(_, message: Message):
 # RENDER HEALTH SERVER
 # ============================================================
 
-async def health(request):
+async def health(
+    request
+):
 
     return web.Response(
-        text="Telegram Music Bot is running."
+        text="Music Bot is running."
     )
 
 
@@ -658,7 +769,9 @@ async def start_health_server():
         health
     )
 
-    runner = web.AppRunner(app)
+    runner = web.AppRunner(
+        app
+    )
 
     await runner.setup()
 
@@ -671,7 +784,7 @@ async def start_health_server():
     await site.start()
 
     log.info(
-        "Health server started on port %s",
+        "Health server running on port %s",
         PORT
     )
 
@@ -683,13 +796,13 @@ async def start_health_server():
 async def main():
 
     log.info(
-        "🚀 Starting Telegram Music Bot..."
+        "🚀 Starting Music Bot..."
     )
 
     await assistant.start()
 
     log.info(
-        "👤 Assistant account started."
+        "👤 Assistant started."
     )
 
     voice.start()
@@ -707,7 +820,7 @@ async def main():
     await start_health_server()
 
     log.info(
-        "🎵 TELEGRAM MUSIC BOT IS READY"
+        "🎵 MUSIC BOT IS READY"
     )
 
     await asyncio.Event().wait()
@@ -729,4 +842,4 @@ if __name__ == "__main__":
 
         log.info(
             "Bot stopped."
-            )
+    )
