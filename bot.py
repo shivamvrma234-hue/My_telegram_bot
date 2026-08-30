@@ -1,5 +1,6 @@
 import os
 import asyncio
+
 from aiohttp import web
 import yt_dlp
 
@@ -77,8 +78,6 @@ async def start_command(_, message: Message):
     await message.reply_text(
         "🎵 **Telegram Music Bot**\n\n"
         "The bot is online and working!\n\n"
-        "🎧 Voice-chat playback is temporarily disabled "
-        "while the voice engine is being fixed.\n\n"
         "Commands:\n"
         "▶️ `/play <song>` — Search a song\n"
         "📜 `/queue` — Show queue\n"
@@ -101,8 +100,7 @@ async def help_command(_, message: Message):
         "📜 `/queue` — Show queue\n"
         "⏭ `/skip` — Remove current queue item\n"
         "⏹ `/stop` — Clear the queue\n"
-        "❓ `/help` — Show this message\n\n"
-        "⚠️ Voice-chat playback is currently disabled."
+        "❓ `/help` — Show this message"
     )
 
 
@@ -114,10 +112,12 @@ async def help_command(_, message: Message):
 async def play_command(_, message: Message):
 
     if len(message.command) < 2:
+
         await message.reply_text(
             "❌ Usage:\n\n"
             "`/play song name`"
         )
+
         return
 
     query = " ".join(message.command[1:])
@@ -128,6 +128,7 @@ async def play_command(_, message: Message):
     )
 
     try:
+
         song = await asyncio.to_thread(
             search_song,
             query
@@ -136,8 +137,10 @@ async def play_command(_, message: Message):
     except Exception as error:
 
         await status.edit_text(
-            f"❌ Search failed.\n\n`{error}`"
+            f"❌ Search failed.\n\n"
+            f"`{error}`"
         )
+
         return
 
     if chat_id not in queues:
@@ -150,8 +153,7 @@ async def play_command(_, message: Message):
     await status.edit_text(
         "🎵 **Song found!**\n\n"
         f"🎶 **{song['title']}**\n\n"
-        f"📌 Queue position: `{position}`\n\n"
-        "⚠️ Voice playback is temporarily disabled."
+        f"📌 Queue position: `{position}`"
     )
 
 
@@ -166,15 +168,21 @@ async def queue_command(_, message: Message):
     queue = queues.get(chat_id, [])
 
     if not queue:
+
         await message.reply_text(
             "📜 **Queue is empty.**"
         )
+
         return
 
     text = "📜 **Music Queue**\n\n"
 
     for number, song in enumerate(queue, 1):
-        title = song.get("title", "Unknown")
+
+        title = song.get(
+            "title",
+            "Unknown"
+        )
 
         text += (
             f"`{number}.` {title}\n"
@@ -194,9 +202,11 @@ async def skip_command(_, message: Message):
     queue = queues.get(chat_id, [])
 
     if not queue:
+
         await message.reply_text(
             "❌ Nothing is in the queue."
         )
+
         return
 
     skipped = queue.pop(0)
@@ -216,8 +226,15 @@ async def stop_command(_, message: Message):
 
     chat_id = message.chat.id
 
-    queues.pop(chat_id, None)
-    now_playing.pop(chat_id, None)
+    queues.pop(
+        chat_id,
+        None
+    )
+
+    now_playing.pop(
+        chat_id,
+        None
+    )
 
     await message.reply_text(
         "⏹ **Music queue stopped.**\n"
@@ -226,7 +243,7 @@ async def stop_command(_, message: Message):
 
 
 # =========================================================
-# HEALTH SERVER FOR RENDER
+# RENDER HEALTH SERVER
 # =========================================================
 
 async def health(request):
@@ -240,8 +257,15 @@ async def start_health_server():
 
     app = web.Application()
 
-    app.router.add_get("/", health)
-    app.router.add_get("/health", health)
+    app.router.add_get(
+        "/",
+        health
+    )
+
+    app.router.add_get(
+        "/health",
+        health
+    )
 
     runner = web.AppRunner(app)
 
@@ -270,18 +294,35 @@ async def main():
     print("🚀 Starting Telegram Music Bot")
     print("================================")
 
-    await start_health_server()
+    try:
 
-    print("🌐 Health server started.")
+        await start_health_server()
 
-    await bot.start()
+        print(
+            "🌐 Health server started."
+        )
 
-    print("🤖 Telegram bot started.")
-    print("================================")
-    print("🎵 BOT IS READY")
-    print("================================")
+        await bot.start()
 
-    await asyncio.Event().wait()
+        print(
+            "🤖 Telegram bot started."
+        )
+
+        print("================================")
+        print("🎵 BOT IS READY")
+        print("================================")
+
+        await asyncio.Event().wait()
+
+    except Exception as error:
+
+        print(
+            "❌ BOT STARTUP ERROR:"
+        )
+
+        print(error)
+
+        raise
 
 
 # =========================================================
@@ -291,8 +332,11 @@ async def main():
 if __name__ == "__main__":
 
     try:
+
         asyncio.run(main())
 
     except KeyboardInterrupt:
 
-        print("🛑 Bot stopped.")
+        print(
+            "🛑 Bot stopped."
+        )
