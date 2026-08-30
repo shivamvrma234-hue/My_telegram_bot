@@ -1,12 +1,12 @@
 FROM python:3.12-slim
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       ffmpeg \
-       gcc \
-       build-essential \
-       git \
-       ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    gcc \
+    g++ \
+    build-essential \
+    git \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
