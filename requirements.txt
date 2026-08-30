@@ -1,5 +1,5 @@
-pyrogram>=2.0.106
+pyrogram>=2.0.106,<2.1
 tgcrypto
-py-tgcalls>=2.2.0
+py-tgcalls[pyrogram]==2.3.3
 yt-dlp
 aiohttp>=3.9.3
