@@ -3,7 +3,7 @@ import asyncio
 import traceback
 
 from aiohttp import web
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 from pyrogram.types import Message
 from pyrogram.errors import FloodWait
 import yt_dlp
@@ -51,7 +51,6 @@ now_playing = {}
 # =========================================================
 
 def search_song(query):
-
     options = {
         "format": "bestaudio/best",
         "quiet": True,
@@ -61,7 +60,6 @@ def search_song(query):
     }
 
     with yt_dlp.YoutubeDL(options) as ydl:
-
         info = ydl.extract_info(
             query,
             download=False
@@ -71,7 +69,6 @@ def search_song(query):
             raise Exception("No result found.")
 
         if "entries" in info:
-
             entries = info.get("entries") or []
 
             if not entries:
@@ -80,31 +77,33 @@ def search_song(query):
             info = entries[0]
 
         return {
-            "title": info.get(
-                "title",
-                "Unknown"
-            ),
+            "title": info.get("title", "Unknown"),
             "url": info.get("url"),
-            "webpage_url": info.get(
-                "webpage_url"
-            )
+            "webpage_url": info.get("webpage_url")
         }
 
 
 # =========================================================
-# 🔍 DIAGNOSTIC MESSAGE HANDLER
+# RAW TELEGRAM UPDATE DIAGNOSTIC
 # =========================================================
-#
-# This is intentionally placed in group -1.
-# It should run before the normal command handlers.
-#
-# If you send "hello", Render should show:
-#
-# 📩 MESSAGE RECEIVED: 'hello'
-#
-# If nothing appears, Telegram updates are not reaching
-# the Pyrogram message handlers.
-#
+
+@bot.on_raw_update()
+async def raw_update_debug(
+    client,
+    update,
+    users,
+    chats
+):
+    print(
+        f"📡 RAW TELEGRAM UPDATE: "
+        f"{type(update).__name__}",
+        flush=True
+    )
+
+
+# =========================================================
+# MESSAGE DIAGNOSTIC
+# =========================================================
 
 @bot.on_message(
     filters.private,
@@ -114,11 +113,7 @@ async def diagnostic_handler(
     client,
     message: Message
 ):
-
     try:
-
-        text = message.text
-
         print(
             "========================================",
             flush=True
@@ -136,7 +131,7 @@ async def diagnostic_handler(
         )
 
         print(
-            f"💬 Text: {text!r}",
+            f"💬 Text: {message.text!r}",
             flush=True
         )
 
@@ -146,7 +141,6 @@ async def diagnostic_handler(
         )
 
     except Exception as error:
-
         print(
             f"❌ Diagnostic error: {error}",
             flush=True
@@ -165,14 +159,12 @@ async def start_command(
     client,
     message: Message
 ):
-
     print(
         "▶️ /start HANDLER EXECUTED",
         flush=True
     )
 
     try:
-
         await message.reply_text(
             "🎵 **Music Bot**\n\n"
             "✅ Bot is online!\n\n"
@@ -191,7 +183,6 @@ async def start_command(
         )
 
     except Exception as error:
-
         print(
             f"❌ /start reply failed: "
             f"{type(error).__name__}: {error}",
@@ -211,14 +202,12 @@ async def help_command(
     client,
     message: Message
 ):
-
     print(
         "▶️ /help HANDLER EXECUTED",
         flush=True
     )
 
     try:
-
         await message.reply_text(
             "🎵 **Music Bot Help**\n\n"
             "▶️ `/play <song>`\n"
@@ -239,7 +228,6 @@ async def help_command(
         )
 
     except Exception as error:
-
         print(
             f"❌ /help reply failed: "
             f"{type(error).__name__}: {error}",
@@ -259,19 +247,16 @@ async def play_command(
     client,
     message: Message
 ):
-
     print(
         "▶️ /play HANDLER EXECUTED",
         flush=True
     )
 
     if len(message.command) < 2:
-
         await message.reply_text(
             "❌ Usage:\n"
             "`/play song name`"
         )
-
         return
 
     query = " ".join(
@@ -285,14 +270,12 @@ async def play_command(
     )
 
     try:
-
         song = await asyncio.to_thread(
             search_song,
             query
         )
 
     except Exception as error:
-
         print(
             f"❌ YouTube search error: {error}",
             flush=True
@@ -302,7 +285,6 @@ async def play_command(
             "❌ Search failed.\n\n"
             f"`{str(error)[:1000]}`"
         )
-
         return
 
     if chat_id not in queues:
@@ -334,7 +316,6 @@ async def queue_command(
     client,
     message: Message
 ):
-
     print(
         "▶️ /queue HANDLER EXECUTED",
         flush=True
@@ -348,11 +329,9 @@ async def queue_command(
     )
 
     if not queue:
-
         await message.reply_text(
             "📜 **Queue is empty.**"
         )
-
         return
 
     text = "📜 **Music Queue**\n\n"
@@ -361,15 +340,12 @@ async def queue_command(
         queue,
         1
     ):
-
         text += (
             f"`{number}.` "
             f"{song.get('title', 'Unknown')}\n"
         )
 
-    await message.reply_text(
-        text
-    )
+    await message.reply_text(text)
 
 
 # =========================================================
@@ -384,7 +360,6 @@ async def skip_command(
     client,
     message: Message
 ):
-
     print(
         "▶️ /skip HANDLER EXECUTED",
         flush=True
@@ -398,11 +373,9 @@ async def skip_command(
     )
 
     if not queue:
-
         await message.reply_text(
             "❌ Nothing is in the queue."
         )
-
         return
 
     skipped = queue.pop(0)
@@ -425,7 +398,6 @@ async def stop_command(
     client,
     message: Message
 ):
-
     print(
         "▶️ /stop HANDLER EXECUTED",
         flush=True
@@ -454,14 +426,12 @@ async def stop_command(
 # =========================================================
 
 async def health(request):
-
     return web.Response(
         text="🎵 Telegram Music Bot is running!"
     )
 
 
 async def start_health_server():
-
     app = web.Application()
 
     app.router.add_get(
@@ -506,7 +476,6 @@ async def start_telegram_bot():
     )
 
     try:
-
         await bot.start()
 
         print(
@@ -625,7 +594,6 @@ async def main():
         flush=True
     )
 
-    # Start Render web server
     await start_health_server()
 
     print(
@@ -633,7 +601,6 @@ async def main():
         flush=True
     )
 
-    # Start Telegram
     connected = await start_telegram_bot()
 
     if not connected:
@@ -658,8 +625,13 @@ async def main():
         flush=True
     )
 
-    # Keep process alive
-    await asyncio.Event().wait()
+    # Pyrogram's event loop
+    await idle()
+
+    print(
+        "🛑 Pyrogram idle stopped.",
+        flush=True
+    )
 
 
 # =========================================================
@@ -669,7 +641,6 @@ async def main():
 if __name__ == "__main__":
 
     try:
-
         asyncio.run(main())
 
     except KeyboardInterrupt:
@@ -701,4 +672,4 @@ if __name__ == "__main__":
         print(
             "========================================",
             flush=True
-                )
+    )
