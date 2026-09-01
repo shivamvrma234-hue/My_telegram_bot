@@ -2,10 +2,12 @@ import os
 import asyncio
 import traceback
 
+import aiohttp
 from aiohttp import web
+
 from pyrogram import Client, filters, idle
 from pyrogram.types import Message
-from pyrogram.errors import FloodWait
+
 import yt_dlp
 
 
@@ -13,28 +15,24 @@ import yt_dlp
 # CONFIG
 # =========================================================
 
-try:
-    API_ID = int(os.environ["API_ID"])
-    API_HASH = os.environ["API_HASH"]
-    BOT_TOKEN = os.environ["BOT_TOKEN"]
-except KeyError as error:
-    raise RuntimeError(
-        f"Missing Render environment variable: {error.args[0]}"
-    )
+API_ID = int(os.environ["API_ID"])
+API_HASH = os.environ["API_HASH"]
+BOT_TOKEN = os.environ["BOT_TOKEN"]
 
 PORT = int(os.environ.get("PORT", "10000"))
 
 
 # =========================================================
-# TELEGRAM BOT
+# PYROGRAM CLIENT
 # =========================================================
 
 bot = Client(
-    "music_bot",
+    "yurix_music_bot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
-    in_memory=True
+    in_memory=True,
+    no_updates=False
 )
 
 
@@ -47,44 +45,52 @@ now_playing = {}
 
 
 # =========================================================
-# YOUTUBE SEARCH
+# REMOVE TELEGRAM WEBHOOK
 # =========================================================
 
-def search_song(query):
-    options = {
-        "format": "bestaudio/best",
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "default_search": "ytsearch1",
-    }
+async def delete_webhook():
+    print("🧹 Checking Telegram webhook...", flush=True)
 
-    with yt_dlp.YoutubeDL(options) as ydl:
-        info = ydl.extract_info(
-            query,
-            download=False
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{BOT_TOKEN}/deleteWebhook"
+    )
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url,
+                params={"drop_pending_updates": "false"}
+            ) as response:
+
+                result = await response.json()
+
+                print(
+                    f"🧹 Webhook removal result: {result}",
+                    flush=True
+                )
+
+                if result.get("ok"):
+                    print(
+                        "✅ Telegram webhook removed.",
+                        flush=True
+                    )
+                else:
+                    print(
+                        "⚠️ Telegram webhook removal failed.",
+                        flush=True
+                    )
+
+    except Exception as error:
+        print(
+            f"❌ Webhook check error: "
+            f"{type(error).__name__}: {error}",
+            flush=True
         )
 
-        if not info:
-            raise Exception("No result found.")
-
-        if "entries" in info:
-            entries = info.get("entries") or []
-
-            if not entries:
-                raise Exception("Song not found.")
-
-            info = entries[0]
-
-        return {
-            "title": info.get("title", "Unknown"),
-            "url": info.get("url"),
-            "webpage_url": info.get("webpage_url")
-        }
-
 
 # =========================================================
-# RAW TELEGRAM UPDATE DIAGNOSTIC
+# RAW UPDATE DIAGNOSTIC
 # =========================================================
 
 @bot.on_raw_update()
@@ -95,25 +101,43 @@ async def raw_update_debug(
     chats
 ):
     print(
+        "========================================",
+        flush=True
+    )
+
+    print(
         f"📡 RAW TELEGRAM UPDATE: "
         f"{type(update).__name__}",
         flush=True
     )
 
+    print(
+        "========================================",
+        flush=True
+    )
+
 
 # =========================================================
-# MESSAGE DIAGNOSTIC
+# ALL MESSAGE DIAGNOSTIC
 # =========================================================
 
 @bot.on_message(
-    filters.private,
-    group=-1
+    filters.all,
+    group=-100
 )
 async def diagnostic_handler(
     client,
     message: Message
 ):
     try:
+        user_id = (
+            message.from_user.id
+            if message.from_user
+            else "Unknown"
+        )
+
+        text = message.text
+
         print(
             "========================================",
             flush=True
@@ -125,13 +149,17 @@ async def diagnostic_handler(
         )
 
         print(
-            f"👤 User ID: "
-            f"{message.from_user.id if message.from_user else 'Unknown'}",
+            f"👤 User ID: {user_id}",
             flush=True
         )
 
         print(
-            f"💬 Text: {message.text!r}",
+            f"💬 Text: {text!r}",
+            flush=True
+        )
+
+        print(
+            f"💬 Chat ID: {message.chat.id}",
             flush=True
         )
 
@@ -166,25 +194,24 @@ async def start_command(
 
     try:
         await message.reply_text(
-            "🎵 **Music Bot**\n\n"
+            "🎵 **Yurix Music Bot**\n\n"
             "✅ Bot is online!\n\n"
-            "Commands:\n"
-            "▶️ `/play <song>` - Search song\n"
-            "📜 `/queue` - Show queue\n"
-            "⏭ `/skip` - Skip song\n"
-            "⏹ `/stop` - Clear queue\n"
-            "❓ `/help` - Help\n\n"
-            "⚠️ Voice playback is currently disabled."
+            "🎶 Music commands:\n"
+            "• `/play <song>`\n"
+            "• `/queue`\n"
+            "• `/skip`\n"
+            "• `/stop`\n\n"
+            "❓ `/help`"
         )
 
         print(
-            "✅ /start REPLY SENT",
+            "✅ /start reply sent.",
             flush=True
         )
 
     except Exception as error:
         print(
-            f"❌ /start reply failed: "
+            f"❌ /start error: "
             f"{type(error).__name__}: {error}",
             flush=True
         )
@@ -207,32 +234,62 @@ async def help_command(
         flush=True
     )
 
-    try:
-        await message.reply_text(
-            "🎵 **Music Bot Help**\n\n"
-            "▶️ `/play <song>`\n"
-            "Search for a song.\n\n"
-            "📜 `/queue`\n"
-            "Show the current queue.\n\n"
-            "⏭ `/skip`\n"
-            "Skip the first queued song.\n\n"
-            "⏹ `/stop`\n"
-            "Clear the queue.\n\n"
-            "❓ `/help`\n"
-            "Show this help message."
+    await message.reply_text(
+        "🎵 **Music Bot Help**\n\n"
+        "▶️ `/play <song>` — Play/search a song\n"
+        "📜 `/queue` — Show queue\n"
+        "⏭ `/skip` — Skip current song\n"
+        "⏹ `/stop` — Stop music\n"
+        "❓ `/help` — Show help"
+    )
+
+
+# =========================================================
+# YOUTUBE SEARCH
+# =========================================================
+
+def search_song(query):
+    options = {
+        "format": "bestaudio/best",
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "default_search": "ytsearch1",
+    }
+
+    with yt_dlp.YoutubeDL(options) as ydl:
+
+        info = ydl.extract_info(
+            query,
+            download=False
         )
 
-        print(
-            "✅ /help REPLY SENT",
-            flush=True
-        )
+        if not info:
+            raise Exception(
+                "No result found."
+            )
 
-    except Exception as error:
-        print(
-            f"❌ /help reply failed: "
-            f"{type(error).__name__}: {error}",
-            flush=True
-        )
+        if "entries" in info:
+
+            entries = info.get("entries") or []
+
+            if not entries:
+                raise Exception(
+                    "Song not found."
+                )
+
+            info = entries[0]
+
+        return {
+            "title": info.get(
+                "title",
+                "Unknown"
+            ),
+            "url": info.get("url"),
+            "webpage_url": info.get(
+                "webpage_url"
+            )
+        }
 
 
 # =========================================================
@@ -253,39 +310,43 @@ async def play_command(
     )
 
     if len(message.command) < 2:
+
         await message.reply_text(
             "❌ Usage:\n"
             "`/play song name`"
         )
+
         return
 
     query = " ".join(
         message.command[1:]
     )
 
-    chat_id = message.chat.id
-
     status = await message.reply_text(
-        "🔎 Searching..."
+        "🔎 Searching for the song..."
     )
 
     try:
+
         song = await asyncio.to_thread(
             search_song,
             query
         )
 
     except Exception as error:
+
         print(
-            f"❌ YouTube search error: {error}",
+            f"❌ Search error: {error}",
             flush=True
         )
 
         await status.edit_text(
-            "❌ Search failed.\n\n"
-            f"`{str(error)[:1000]}`"
+            "❌ Couldn't find the song."
         )
+
         return
+
+    chat_id = message.chat.id
 
     if chat_id not in queues:
         queues[chat_id] = []
@@ -297,10 +358,11 @@ async def play_command(
     )
 
     await status.edit_text(
-        "🎵 **Song found!**\n\n"
-        f"🎶 **{song['title']}**\n\n"
+        "🎵 **Song added!**\n\n"
+        f"🎶 {song['title']}\n\n"
         f"📌 Queue position: `{position}`\n\n"
-        "⚠️ Voice playback is currently disabled."
+        "⚠️ Voice playback is not connected "
+        "in this diagnostic version."
     )
 
 
@@ -329,20 +391,27 @@ async def queue_command(
     )
 
     if not queue:
+
         await message.reply_text(
             "📜 **Queue is empty.**"
         )
+
         return
 
     text = "📜 **Music Queue**\n\n"
 
-    for number, song in enumerate(
+    for index, song in enumerate(
         queue,
         1
     ):
+
+        title = song.get(
+            "title",
+            "Unknown"
+        )
+
         text += (
-            f"`{number}.` "
-            f"{song.get('title', 'Unknown')}\n"
+            f"`{index}.` {title}\n"
         )
 
     await message.reply_text(text)
@@ -373,9 +442,11 @@ async def skip_command(
     )
 
     if not queue:
+
         await message.reply_text(
-            "❌ Nothing is in the queue."
+            "❌ Queue is empty."
         )
+
         return
 
     skipped = queue.pop(0)
@@ -426,12 +497,14 @@ async def stop_command(
 # =========================================================
 
 async def health(request):
+
     return web.Response(
-        text="🎵 Telegram Music Bot is running!"
+        text="🎵 Yurix Music Bot is running!"
     )
 
 
 async def start_health_server():
+
     app = web.Application()
 
     app.router.add_get(
@@ -457,7 +530,8 @@ async def start_health_server():
     await site.start()
 
     print(
-        f"🌐 Health server running on port {PORT}",
+        f"🌐 Health server running "
+        f"on port {PORT}",
         flush=True
     )
 
@@ -465,7 +539,7 @@ async def start_health_server():
 
 
 # =========================================================
-# TELEGRAM STARTUP
+# START TELEGRAM
 # =========================================================
 
 async def start_telegram_bot():
@@ -476,6 +550,7 @@ async def start_telegram_bot():
     )
 
     try:
+
         await bot.start()
 
         print(
@@ -517,30 +592,6 @@ async def start_telegram_bot():
 
         return True
 
-    except FloodWait as error:
-
-        print(
-            "========================================",
-            flush=True
-        )
-
-        print(
-            "⏳ TELEGRAM FLOOD WAIT",
-            flush=True
-        )
-
-        print(
-            f"Wait required: {error.value} seconds",
-            flush=True
-        )
-
-        print(
-            "========================================",
-            flush=True
-        )
-
-        return False
-
     except Exception as error:
 
         print(
@@ -554,7 +605,7 @@ async def start_telegram_bot():
         )
 
         print(
-            f"Error type: {type(error).__name__}",
+            f"Type: {type(error).__name__}",
             flush=True
         )
 
@@ -601,17 +652,15 @@ async def main():
         flush=True
     )
 
+    # Remove webhook BEFORE starting Pyrogram
+    await delete_webhook()
+
     connected = await start_telegram_bot()
 
     if not connected:
 
         print(
-            "❌ Telegram bot could not start.",
-            flush=True
-        )
-
-        print(
-            "⚠️ Health server will remain online.",
+            "❌ Telegram bot failed to start.",
             flush=True
         )
 
@@ -625,11 +674,11 @@ async def main():
         flush=True
     )
 
-    # Pyrogram's event loop
+    # Keep Pyrogram's update dispatcher alive
     await idle()
 
     print(
-        "🛑 Pyrogram idle stopped.",
+        "🛑 Pyrogram stopped.",
         flush=True
     )
 
@@ -641,6 +690,7 @@ async def main():
 if __name__ == "__main__":
 
     try:
+
         asyncio.run(main())
 
     except KeyboardInterrupt:
@@ -663,7 +713,12 @@ if __name__ == "__main__":
         )
 
         print(
-            f"{type(error).__name__}: {error}",
+            f"Type: {type(error).__name__}",
+            flush=True
+        )
+
+        print(
+            f"Error: {error}",
             flush=True
         )
 
@@ -672,4 +727,4 @@ if __name__ == "__main__":
         print(
             "========================================",
             flush=True
-    )
+)
