@@ -1,730 +1,312 @@
 import os
 import asyncio
-import traceback
-
-import aiohttp
-from aiohttp import web
-
-from pyrogram import Client, filters, idle
-from pyrogram.types import Message
-
-import yt_dlp
-
-
-# =========================================================
-# CONFIG
-# =========================================================
-
-API_ID = int(os.environ["API_ID"])
-API_HASH = os.environ["API_HASH"]
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-
-PORT = int(os.environ.get("PORT", "10000"))
-
-
-# =========================================================
-# PYROGRAM CLIENT
-# =========================================================
-
-bot = Client(
-    "yurix_music_bot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    in_memory=True,
-    no_updates=False
+from datetime import datetime, timedelta
+from pyrogram import Client, filters
+from pyrogram.types import (
+    Message,
+    ChatPermissions,
+    ChatPrivileges,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery
 )
+from pyrogram.errors import UserAdminInvalid, PeerIdInvalid, RPCError
+
+# --- Configuration (Read from Render Environment Variables) ---
+API_ID = int(os.environ.get("API_ID", 0))
+API_HASH = os.environ.get("API_HASH", "")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+
+app = Client("AdminBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+# Temporary In-Memory Storage for User Warnings
+# Schema: {(chat_id, user_id): warning_count}
+USER_WARNINGS = {}
+MAX_WARNINGS = 3
 
 
-# =========================================================
-# MUSIC DATA
-# =========================================================
+# --- Helpers ---
 
-queues = {}
-now_playing = {}
+async def extract_target_user(client: Client, message: Message):
+    """Extract target user from reply or command argument (@username / User ID)."""
+    if message.reply_to_message and message.reply_to_message.from_user:
+        return message.reply_to_message.from_user
+
+    cmd_args = message.command
+    if len(cmd_args) > 1:
+        target = cmd_args[1]
+        try:
+            if target.isdigit():
+                user = await client.get_users(int(target))
+            else:
+                user = await client.get_users(target)
+            return user
+        except Exception:
+            return None
+    return None
 
 
-# =========================================================
-# REMOVE TELEGRAM WEBHOOK
-# =========================================================
-
-async def delete_webhook():
-    print("🧹 Checking Telegram webhook...", flush=True)
-
-    url = (
-        f"https://api.telegram.org/"
-        f"bot{BOT_TOKEN}/deleteWebhook"
-    )
-
+async def is_admin(client: Client, chat_id: int, user_id: int) -> bool:
+    """Check if the command invoker is an admin or creator."""
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                url,
-                params={"drop_pending_updates": "false"}
-            ) as response:
-
-                result = await response.json()
-
-                print(
-                    f"🧹 Webhook removal result: {result}",
-                    flush=True
-                )
-
-                if result.get("ok"):
-                    print(
-                        "✅ Telegram webhook removed.",
-                        flush=True
-                    )
-                else:
-                    print(
-                        "⚠️ Telegram webhook removal failed.",
-                        flush=True
-                    )
-
-    except Exception as error:
-        print(
-            f"❌ Webhook check error: "
-            f"{type(error).__name__}: {error}",
-            flush=True
-        )
-
-
-# =========================================================
-# RAW UPDATE DIAGNOSTIC
-# =========================================================
-
-@bot.on_raw_update()
-async def raw_update_debug(
-    client,
-    update,
-    users,
-    chats
-):
-    print(
-        "========================================",
-        flush=True
-    )
-
-    print(
-        f"📡 RAW TELEGRAM UPDATE: "
-        f"{type(update).__name__}",
-        flush=True
-    )
-
-    print(
-        "========================================",
-        flush=True
-    )
-
-
-# =========================================================
-# ALL MESSAGE DIAGNOSTIC
-# =========================================================
-
-@bot.on_message(
-    filters.all,
-    group=-100
-)
-async def diagnostic_handler(
-    client,
-    message: Message
-):
-    try:
-        user_id = (
-            message.from_user.id
-            if message.from_user
-            else "Unknown"
-        )
-
-        text = message.text
-
-        print(
-            "========================================",
-            flush=True
-        )
-
-        print(
-            "📩 MESSAGE RECEIVED",
-            flush=True
-        )
-
-        print(
-            f"👤 User ID: {user_id}",
-            flush=True
-        )
-
-        print(
-            f"💬 Text: {text!r}",
-            flush=True
-        )
-
-        print(
-            f"💬 Chat ID: {message.chat.id}",
-            flush=True
-        )
-
-        print(
-            "========================================",
-            flush=True
-        )
-
-    except Exception as error:
-        print(
-            f"❌ Diagnostic error: {error}",
-            flush=True
-        )
-
-
-# =========================================================
-# /START
-# =========================================================
-
-@bot.on_message(
-    filters.command("start"),
-    group=0
-)
-async def start_command(
-    client,
-    message: Message
-):
-    print(
-        "▶️ /start HANDLER EXECUTED",
-        flush=True
-    )
-
-    try:
-        await message.reply_text(
-            "🎵 **Yurix Music Bot**\n\n"
-            "✅ Bot is online!\n\n"
-            "🎶 Music commands:\n"
-            "• `/play <song>`\n"
-            "• `/queue`\n"
-            "• `/skip`\n"
-            "• `/stop`\n\n"
-            "❓ `/help`"
-        )
-
-        print(
-            "✅ /start reply sent.",
-            flush=True
-        )
-
-    except Exception as error:
-        print(
-            f"❌ /start error: "
-            f"{type(error).__name__}: {error}",
-            flush=True
-        )
-
-
-# =========================================================
-# /HELP
-# =========================================================
-
-@bot.on_message(
-    filters.command("help"),
-    group=0
-)
-async def help_command(
-    client,
-    message: Message
-):
-    print(
-        "▶️ /help HANDLER EXECUTED",
-        flush=True
-    )
-
-    await message.reply_text(
-        "🎵 **Music Bot Help**\n\n"
-        "▶️ `/play <song>` — Play/search a song\n"
-        "📜 `/queue` — Show queue\n"
-        "⏭ `/skip` — Skip current song\n"
-        "⏹ `/stop` — Stop music\n"
-        "❓ `/help` — Show help"
-    )
-
-
-# =========================================================
-# YOUTUBE SEARCH
-# =========================================================
-
-def search_song(query):
-    options = {
-        "format": "bestaudio/best",
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "default_search": "ytsearch1",
-    }
-
-    with yt_dlp.YoutubeDL(options) as ydl:
-
-        info = ydl.extract_info(
-            query,
-            download=False
-        )
-
-        if not info:
-            raise Exception(
-                "No result found."
-            )
-
-        if "entries" in info:
-
-            entries = info.get("entries") or []
-
-            if not entries:
-                raise Exception(
-                    "Song not found."
-                )
-
-            info = entries[0]
-
-        return {
-            "title": info.get(
-                "title",
-                "Unknown"
-            ),
-            "url": info.get("url"),
-            "webpage_url": info.get(
-                "webpage_url"
-            )
-        }
-
-
-# =========================================================
-# /PLAY
-# =========================================================
-
-@bot.on_message(
-    filters.command("play"),
-    group=0
-)
-async def play_command(
-    client,
-    message: Message
-):
-    print(
-        "▶️ /play HANDLER EXECUTED",
-        flush=True
-    )
-
-    if len(message.command) < 2:
-
-        await message.reply_text(
-            "❌ Usage:\n"
-            "`/play song name`"
-        )
-
-        return
-
-    query = " ".join(
-        message.command[1:]
-    )
-
-    status = await message.reply_text(
-        "🔎 Searching for the song..."
-    )
-
-    try:
-
-        song = await asyncio.to_thread(
-            search_song,
-            query
-        )
-
-    except Exception as error:
-
-        print(
-            f"❌ Search error: {error}",
-            flush=True
-        )
-
-        await status.edit_text(
-            "❌ Couldn't find the song."
-        )
-
-        return
-
-    chat_id = message.chat.id
-
-    if chat_id not in queues:
-        queues[chat_id] = []
-
-    queues[chat_id].append(song)
-
-    position = len(
-        queues[chat_id]
-    )
-
-    await status.edit_text(
-        "🎵 **Song added!**\n\n"
-        f"🎶 {song['title']}\n\n"
-        f"📌 Queue position: `{position}`\n\n"
-        "⚠️ Voice playback is not connected "
-        "in this diagnostic version."
-    )
-
-
-# =========================================================
-# /QUEUE
-# =========================================================
-
-@bot.on_message(
-    filters.command("queue"),
-    group=0
-)
-async def queue_command(
-    client,
-    message: Message
-):
-    print(
-        "▶️ /queue HANDLER EXECUTED",
-        flush=True
-    )
-
-    chat_id = message.chat.id
-
-    queue = queues.get(
-        chat_id,
-        []
-    )
-
-    if not queue:
-
-        await message.reply_text(
-            "📜 **Queue is empty.**"
-        )
-
-        return
-
-    text = "📜 **Music Queue**\n\n"
-
-    for index, song in enumerate(
-        queue,
-        1
-    ):
-
-        title = song.get(
-            "title",
-            "Unknown"
-        )
-
-        text += (
-            f"`{index}.` {title}\n"
-        )
-
-    await message.reply_text(text)
-
-
-# =========================================================
-# /SKIP
-# =========================================================
-
-@bot.on_message(
-    filters.command("skip"),
-    group=0
-)
-async def skip_command(
-    client,
-    message: Message
-):
-    print(
-        "▶️ /skip HANDLER EXECUTED",
-        flush=True
-    )
-
-    chat_id = message.chat.id
-
-    queue = queues.get(
-        chat_id,
-        []
-    )
-
-    if not queue:
-
-        await message.reply_text(
-            "❌ Queue is empty."
-        )
-
-        return
-
-    skipped = queue.pop(0)
-
-    await message.reply_text(
-        "⏭ **Skipped!**\n\n"
-        f"🎶 {skipped.get('title', 'Unknown')}"
-    )
-
-
-# =========================================================
-# /STOP
-# =========================================================
-
-@bot.on_message(
-    filters.command("stop"),
-    group=0
-)
-async def stop_command(
-    client,
-    message: Message
-):
-    print(
-        "▶️ /stop HANDLER EXECUTED",
-        flush=True
-    )
-
-    chat_id = message.chat.id
-
-    queues.pop(
-        chat_id,
-        None
-    )
-
-    now_playing.pop(
-        chat_id,
-        None
-    )
-
-    await message.reply_text(
-        "⏹ **Music stopped.**\n\n"
-        "🗑 Queue cleared."
-    )
-
-
-# =========================================================
-# RENDER HEALTH SERVER
-# =========================================================
-
-async def health(request):
-
-    return web.Response(
-        text="🎵 Yurix Music Bot is running!"
-    )
-
-
-async def start_health_server():
-
-    app = web.Application()
-
-    app.router.add_get(
-        "/",
-        health
-    )
-
-    app.router.add_get(
-        "/health",
-        health
-    )
-
-    runner = web.AppRunner(app)
-
-    await runner.setup()
-
-    site = web.TCPSite(
-        runner,
-        "0.0.0.0",
-        PORT
-    )
-
-    await site.start()
-
-    print(
-        f"🌐 Health server running "
-        f"on port {PORT}",
-        flush=True
-    )
-
-    return runner
-
-
-# =========================================================
-# START TELEGRAM
-# =========================================================
-
-async def start_telegram_bot():
-
-    print(
-        "🤖 Connecting to Telegram...",
-        flush=True
-    )
-
-    try:
-
-        await bot.start()
-
-        print(
-            "✅ Telegram connection successful!",
-            flush=True
-        )
-
-        me = await bot.get_me()
-
-        print(
-            "========================================",
-            flush=True
-        )
-
-        print(
-            f"🤖 Bot: {me.first_name}",
-            flush=True
-        )
-
-        print(
-            f"👤 Username: @{me.username}",
-            flush=True
-        )
-
-        print(
-            f"🆔 ID: {me.id}",
-            flush=True
-        )
-
-        print(
-            "🎵 MUSIC BOT IS READY",
-            flush=True
-        )
-
-        print(
-            "========================================",
-            flush=True
-        )
-
-        return True
-
-    except Exception as error:
-
-        print(
-            "========================================",
-            flush=True
-        )
-
-        print(
-            "❌ TELEGRAM START ERROR",
-            flush=True
-        )
-
-        print(
-            f"Type: {type(error).__name__}",
-            flush=True
-        )
-
-        print(
-            f"Error: {error}",
-            flush=True
-        )
-
-        traceback.print_exc()
-
-        print(
-            "========================================",
-            flush=True
-        )
-
+        member = await client.get_chat_member(chat_id, user_id)
+        return member.status in ["administrator", "creator"]
+    except Exception:
         return False
 
 
-# =========================================================
-# MAIN
-# =========================================================
+async def can_promote(client: Client, chat_id: int, user_id: int) -> bool:
+    """Check if admin has rights to add/promote new admins."""
+    try:
+        member = await client.get_chat_member(chat_id, user_id)
+        if member.status == "creator":
+            return True
+        if member.status == "administrator":
+            return getattr(member.privileges, "can_promote_members", False)
+        return False
+    except Exception:
+        return False
 
-async def main():
 
-    print(
-        "========================================",
-        flush=True
-    )
+# --- Basic & Info Commands ---
 
-    print(
-        "🚀 STARTING TELEGRAM MUSIC BOT",
-        flush=True
-    )
-
-    print(
-        "========================================",
-        flush=True
-    )
-
-    await start_health_server()
-
-    print(
-        "🌐 Render health server started.",
-        flush=True
-    )
-
-    # Remove webhook BEFORE starting Pyrogram
-    await delete_webhook()
-
-    connected = await start_telegram_bot()
-
-    if not connected:
-
-        print(
-            "❌ Telegram bot failed to start.",
-            flush=True
+@app.on_message(filters.command("start"))
+async def start_cmd(client: Client, message: Message):
+    if message.chat.type.value == "private":
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ Add to Group", url=f"https://t.me/{(await client.get_me()).username}?startgroup=true")]
+        ])
+        await message.reply(
+            "🛡️ **AdminBot is Active!**\n\n"
+            "Add me to your group and make me an **Admin** with full permissions to manage your community.",
+            reply_markup=kb
         )
+    else:
+        await message.reply("🛡️ **AdminBot is operational in this group!**")
 
-        await asyncio.Event().wait()
 
-        return
-
-    print(
-        "💚 Bot is running and waiting "
-        "for Telegram messages...",
-        flush=True
+@app.on_message(filters.command("help"))
+async def help_cmd(client: Client, message: Message):
+    help_text = (
+        "<b>━━━ Moderation Commands ━━━</b>\n"
+        "• <code>/ban</code> [user] — Ban a user (Reply or ID/@user)\n"
+        "• <code>/unban</code> &lt;ID&gt; — Unban a user\n"
+        "• <code>/mute</code> [user] — Mute a user\n"
+        "• <code>/unmute</code> &lt;ID&gt; — Unmute a user\n"
+        "• <code>/warn</code> [reason] — Warn a user (Auto-ban at 3/3)\n"
+        "• <code>/warnings</code> [user] — Check user warnings\n"
+        "• <code>/del</code> — Delete replied message\n"
+        "• <code>/pin</code> — Pin replied message\n"
+        "• <code>/unpin</code> — Unpin replied message\n\n"
+        "<b>━━━ Group Management ━━━</b>\n"
+        "• <code>/promote</code> [user] — Promote user to admin\n"
+        "• <code>/demote</code> [user] — Remove admin privileges"
     )
-
-    # Keep Pyrogram's update dispatcher alive
-    await idle()
-
-    print(
-        "🛑 Pyrogram stopped.",
-        flush=True
-    )
+    await message.reply(help_text)
 
 
-# =========================================================
-# RUN
-# =========================================================
+# --- Moderation Core Commands ---
 
-if __name__ == "__main__":
+@app.on_message(filters.command("ban") & filters.group)
+async def ban_user(client: Client, message: Message):
+    if not await is_admin(client, message.chat.id, message.from_user.id):
+        return await message.reply("❌ You need admin permissions to ban users.")
+
+    user = await extract_target_user(client, message)
+    if not user:
+        return await message.reply("⚠️ Reply to a user's message or specify `@username` / `User ID`.")
 
     try:
+        await message.chat.ban_member(user.id)
+        await message.reply(f"🚫 <b>User Banned:</b> {user.mention} (<code>{user.id}</code>)")
+    except RPCError as e:
+        await message.reply(f"❌ Failed to ban: <code>{e.MESSAGE}</code>")
 
-        asyncio.run(main())
 
-    except KeyboardInterrupt:
+@app.on_message(filters.command("unban") & filters.group)
+async def unban_user(client: Client, message: Message):
+    if not await is_admin(client, message.chat.id, message.from_user.id):
+        return await message.reply("❌ You need admin permissions to unban users.")
 
-        print(
-            "🛑 Bot stopped manually.",
-            flush=True
+    user = await extract_target_user(client, message)
+    if not user:
+        return await message.reply("⚠️ Reply to a message or pass user ID: <code>/unban &lt;ID&gt;</code>")
+
+    try:
+        await message.chat.unban_member(user.id)
+        await message.reply(f"✅ <b>User Unbanned:</b> {user.mention}")
+    except RPCError as e:
+        await message.reply(f"❌ Failed to unban: <code>{e.MESSAGE}</code>")
+
+
+@app.on_message(filters.command("mute") & filters.group)
+async def mute_user(client: Client, message: Message):
+    if not await is_admin(client, message.chat.id, message.from_user.id):
+        return
+
+    user = await extract_target_user(client, message)
+    if not user:
+        return await message.reply("⚠️ Reply to a message or specify user to mute.")
+
+    try:
+        await message.chat.restrict_member(user.id, ChatPermissions())
+        await message.reply(f"🔇 <b>User Muted:</b> {user.mention}")
+    except RPCError as e:
+        await message.reply(f"❌ Failed to mute: <code>{e.MESSAGE}</code>")
+
+
+@app.on_message(filters.command("unmute") & filters.group)
+async def unmute_user(client: Client, message: Message):
+    if not await is_admin(client, message.chat.id, message.from_user.id):
+        return
+
+    user = await extract_target_user(client, message)
+    if not user:
+        return await message.reply("⚠️️ Reply to a message or specify user to unmute.")
+
+    try:
+        await message.chat.restrict_member(
+            user.id,
+            ChatPermissions(
+                can_send_messages=True,
+                can_send_media_messages=True,
+                can_send_other_messages=True,
+                can_add_web_page_previews=True,
+            )
         )
+        await message.reply(f"🔊 <b>User Unmuted:</b> {user.mention}")
+    except RPCError as e:
+        await message.reply(f"❌ Failed to unmute: <code>{e.MESSAGE}</code>")
 
-    except Exception as error:
 
-        print(
-            "========================================",
-            flush=True
+# --- Warning System ---
+
+@app.on_message(filters.command("warn") & filters.group)
+async def warn_user(client: Client, message: Message):
+    if not await is_admin(client, message.chat.id, message.from_user.id):
+        return
+
+    user = await extract_target_user(client, message)
+    if not user:
+        return await message.reply("⚠️️ Reply to a message or specify user to warn.")
+
+    key = (message.chat.id, user.id)
+    USER_WARNINGS[key] = USER_WARNINGS.get(key, 0) + 1
+    count = USER_WARNINGS[key]
+
+    if count >= MAX_WARNINGS:
+        try:
+            await message.chat.ban_member(user.id)
+            USER_WARNINGS[key] = 0
+            await message.reply(f"🚫 <b>Auto-Ban Triggered:</b> {user.mention} reached maximum warnings ({MAX_WARNINGS}/{MAX_WARNINGS}).")
+        except RPCError as e:
+            await message.reply(f"❌ Warning added, but failed to auto-ban: <code>{e.MESSAGE}</code>")
+    else:
+        await message.reply(f"⚠️ <b>Warning Added:</b> {user.mention} ({count}/{MAX_WARNINGS})")
+
+
+@app.on_message(filters.command("warnings") & filters.group)
+async def view_warnings(client: Client, message: Message):
+    user = await extract_target_user(client, message) or message.from_user
+    key = (message.chat.id, user.id)
+    count = USER_WARNINGS.get(key, 0)
+    await message.reply(f"📊 <b>Warnings for</b> {user.mention}: {count}/{MAX_WARNINGS}")
+
+
+# --- Delete & Pin Commands ---
+
+@app.on_message(filters.command("del") & filters.group)
+async def delete_msg(client: Client, message: Message):
+    if not await is_admin(client, message.chat.id, message.from_user.id):
+        return
+
+    if message.reply_to_message:
+        await message.reply_to_message.delete()
+        await message.delete()
+    else:
+        await message.reply("⚠️ Reply to the message you want to delete.")
+
+
+@app.on_message(filters.command("pin") & filters.group)
+async def pin_msg(client: Client, message: Message):
+    if not await is_admin(client, message.chat.id, message.from_user.id):
+        return
+
+    if message.reply_to_message:
+        await message.reply_to_message.pin()
+        await message.reply("📌 Message pinned successfully!")
+    else:
+        await message.reply("⚠️ Reply to a message to pin it.")
+
+
+@app.on_message(filters.command("unpin") & filters.group)
+async def unpin_msg(client: Client, message: Message):
+    if not await is_admin(client, message.chat.id, message.from_user.id):
+        return
+
+    if message.reply_to_message:
+        await message.reply_to_message.unpin()
+        await message.reply("📌 Message unpinned.")
+    else:
+        await message.chat.unpin_all_messages()
+        await message.reply("📌 All pinned messages cleared.")
+
+
+# --- Admin Promotion & Demotion ---
+
+@app.on_message(filters.command("promote") & filters.group)
+async def promote_user(client: Client, message: Message):
+    if not await can_promote(client, message.chat.id, message.from_user.id):
+        return await message.reply("❌ You do not have permission to promote admins.")
+
+    user = await extract_target_user(client, message)
+    if not user:
+        return await message.reply("⚠️ Reply to a user or specify `@username` / `User ID` to promote.")
+
+    try:
+        await message.chat.promote_member(
+            user.id,
+            privileges=ChatPrivileges(
+                can_delete_messages=True,
+                can_restrict_members=True,
+                can_invite_users=True,
+                can_pin_messages=True,
+                can_manage_video_chats=True
+            )
         )
+        await message.reply(f"⭐ <b>Promoted User:</b> {user.mention}")
+    except RPCError as e:
+        await message.reply(f"❌ Promotion failed: <code>{e.MESSAGE}</code>")
 
-        print(
-            "❌ FATAL ERROR",
-            flush=True
+
+@app.on_message(filters.command("demote") & filters.group)
+async def demote_user(client: Client, message: Message):
+    if not await can_promote(client, message.chat.id, message.from_user.id):
+        return await message.reply("❌ You do not have permission to demote admins.")
+
+    user = await extract_target_user(client, message)
+    if not user:
+        return await message.reply("⚠️ Reply to a user or specify `@username` / `User ID` to demote.")
+
+    try:
+        await message.chat.promote_member(
+            user.id,
+            privileges=ChatPrivileges(
+                can_delete_messages=False,
+                can_restrict_members=False,
+                can_invite_users=False,
+                can_pin_messages=False,
+                can_promote_members=False,
+                can_change_info=False
+            )
         )
+        await message.reply(f"📉 <b>Demoted User:</b> {user.mention}")
+    except RPCError as e:
+        await message.reply(f"❌ Demotion failed: <code>{e.MESSAGE}</code>")
 
-        print(
-            f"Type: {type(error).__name__}",
-            flush=True
-        )
 
-        print(
-            f"Error: {error}",
-            flush=True
-        )
+# --- Main Application Execution ---
 
-        traceback.print_exc()
-
-        print(
-            "========================================",
-            flush=True
-)
+if __name__ == "__main__":
+    print("🤖 AdminBot worker service starting on Render...")
+    app.run()
